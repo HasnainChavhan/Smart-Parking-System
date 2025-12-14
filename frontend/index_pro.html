@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Parking System - Live Detection</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+
+        .glass-card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+        }
+
+        .pulse-dot {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.5;
+            }
+        }
+
+        .slot-card {
+            transition: all 0.3s ease;
+        }
+
+        .slot-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+        }
+    </style>
+</head>
+
+<body class="min-h-screen p-4">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        function App() {
+            const [slots, setSlots] = useState([]);
+            const [selectedSlot, setSelectedSlot] = useState(null);
+            const [showBookingModal, setShowBookingModal] = useState(false);
+            const [bookingDuration, setBookingDuration] = useState(1);
+            const [stats, setStats] = useState({ total: 0, free: 0, occupied: 0 });
+            const [wsConnected, setWsConnected] = useState(false);
+
+            const BACKEND_URL = "http://localhost:8000/api/v1";
+            const WS_URL = "ws://localhost:8000/api/v1/ws/lot/1";
+            const ML_FEED_URL = "http://localhost:5000/video_feed";
+
+            // Fetch initial data
+            useEffect(() => {
+                fetchSlots();
+
+                // WebSocket connection
+                const ws = new WebSocket(WS_URL);
+
+                ws.onopen = () => {
+                    console.log("WebSocket connected");
+                    setWsConnected(true);
+                };
+
+                ws.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'slot_update') {
+                        updateSlotStatus(data.slot.id, data.slot.status);
+                    }
+                };
+
+                ws.onerror = () => setWsConnected(false);
+                ws.onclose = () => setWsConnected(false);
+
+                return () => ws.close();
+            }, []);
+
+            const fetchSlots = async () => {
+                try {
+                    const response = await fetch(`${BACKEND_URL}/lots/`);
+                    const data = await response.json();
+
+                    if (data.length > 0) {
+                        const lotSlots = data[0].slots || [];
+                        setSlots(lotSlots);
+                        updateStats(lotSlots);
+                    }
+                } catch (error) {
+                    console.error("Error fetching slots:", error);
+                }
+            };
+
+            const updateSlotStatus = (slotId, status) => {
+                setSlots(prev => {
+                    const updated = prev.map(s =>
+                        s.id === slotId ? { ...s, status } : s
+                    );
+                    updateStats(updated);
+                    return updated;
+                });
+            };
+
+            const updateStats = (slotList) => {
+                const total = slotList.length;
+                const free = slotList.filter(s => s.status === 'free').length;
+                const occupied = total - free;
+                setStats({ total, free, occupied });
+            };
+
+            const handleBookSlot = (slot) => {
+                if (slot.status === 'free') {
+                    setSelectedSlot(slot);
+                    setShowBookingModal(true);
+                }
+            };
+
+            const confirmBooking = async () => {
+                if (!selectedSlot) return;
+
+                try {
+                    const response = await fetch(`${BACKEND_URL}/bookings`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            slot_id: selectedSlot.id,
+                            duration_hours: bookingDuration
+                        })
+                    });
+
+                    if (response.ok) {
+                        alert(`✅ Slot ${selectedSlot.name} booked for ${bookingDuration} hour(s)!`);
+                        setShowBookingModal(false);
+                        setSelectedSlot(null);
+                        fetchSlots();
+                    } else {
+                        alert('❌ Booking failed. Please try again.');
+                    }
+                } catch (error) {
+                    alert('❌ Error: ' + error.message);
+                }
+            };
+
+            return (
+                <div className="max-w-7xl mx-auto">
+                    {/* Header */}
+                    <div className="glass-card p-6 mb-6">
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <h1 className="text-3xl font-bold text-gray-800 mb-2">
+                                    🚗 Smart Parking System
+                                </h1>
+                                <p className="text-gray-600">AI-Powered Real-Time Detection</p>
+                            </div>
+
+                            <div className="flex items-center space-x-2">
+                                <div className={`w-3 h-3 rounded-full ${wsConnected ? 'bg-green-500' : 'bg-red-500'} pulse-dot`}></div>
+                                <span className="text-sm font-medium text-gray-700">
+                                    {wsConnected ? 'Live' : 'Offline'}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        {/* Left: Live Feed */}
+                        <div className="lg:col-span-2">
+                            <div className="glass-card p-6 mb-6">
+                                <h2 className="text-xl font-bold text-gray-800 mb-4">
+                                    📹 Live Detection Feed
+                                </h2>
+                                <div className="relative rounded-lg overflow-hidden bg-black">
+                                    <img
+                                        src={ML_FEED_URL}
+                                        alt="Live Detection Feed"
+                                        className="w-full h-auto"
+                                        onError={(e) => {
+                                            e.target.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="640" height="480"%3E%3Crect fill="%23000" width="640" height="480"/%3E%3Ctext fill="%23fff" x="50%25" y="50%25" text-anchor="middle"%3ECamera Loading...%3C/text%3E%3C/svg%3E';
+                                        }}
+                                    />
+                                    <div className="absolute top-4 left-4 bg-red-600 text-white px-3 py-1 rounded-full text-xs font-bold flex items-center">
+                                        <div className="w-2 h-2 bg-white rounded-full mr-2 pulse-dot"></div>
+                                        LIVE
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Stats */}
+                            <div className="grid grid-cols-3 gap-4">
+                                <div className="glass-card p-4 text-center">
+                                    <div className="text-3xl font-bold text-blue-600">{stats.total}</div>
+                                    <div className="text-sm text-gray-600 mt-1">Total Slots</div>
+                                </div>
+                                <div className="glass-card p-4 text-center">
+                                    <div className="text-3xl font-bold text-green-600">{stats.free}</div>
+                                    <div className="text-sm text-gray-600 mt-1">Available</div>
+                                </div>
+                                <div className="glass-card p-4 text-center">
+                                    <div className="text-3xl font-bold text-red-600">{stats.occupied}</div>
+                                    <div className="text-sm text-gray-600 mt-1">Occupied</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Right: Parking Slots */}
+                        <div>
+                            <div className="glass-card p-6">
+                                <h2 className="text-xl font-bold text-gray-800 mb-4">
+                                    🅿️ Parking Slots
+                                </h2>
+
+                                <div className="space-y-3">
+                                    {slots.map(slot => (
+                                        <div
+                                            key={slot.id}
+                                            onClick={() => handleBookSlot(slot)}
+                                            className={`slot-card p-4 rounded-lg border-2 cursor-pointer ${slot.status === 'free'
+                                                    ? 'bg-green-50 border-green-400 hover:bg-green-100'
+                                                    : 'bg-red-50 border-red-400 opacity-75 cursor-not-allowed'
+                                                }`}
+                                        >
+                                            <div className="flex items-center justify-between">
+                                                <div>
+                                                    <div className="text-lg font-bold text-gray-800">
+                                                        {slot.name}
+                                                    </div>
+                                                    <div className={`text-xs font-semibold ${slot.status === 'free' ? 'text-green-600' : 'text-red-600'
+                                                        }`}>
+                                                        {slot.status === 'free' ? '✅ AVAILABLE' : '🚗 OCCUPIED'}
+                                                    </div>
+                                                </div>
+
+                                                {slot.status === 'free' && (
+                                                    <button className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-blue-700 transition">
+                                                        Book Now
+                                                    </button>
+                                                )}
+                                            </div>
+
+                                            <div className="mt-2 text-xs text-gray-600">
+                                                Rate: ₹{slot.rate_per_hour || 50}/hour
+                                            </div>
+                                        </div>
+                                    ))}
+
+                                    {slots.length === 0 && (
+                                        <div className="text-center text-gray-500 py-8">
+                                            Loading slots...
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Booking Modal */}
+                    {showBookingModal && selectedSlot && (
+                        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                            <div className="glass-card p-8 max-w-md w-full">
+                                <h2 className="text-2xl font-bold text-gray-800 mb-4">
+                                    Book Slot {selectedSlot.name}
+                                </h2>
+
+                                <div className="mb-6">
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        Duration (hours)
+                                    </label>
+                                    <input
+                                        type="number"
+                                        min="1"
+                                        max="24"
+                                        value={bookingDuration}
+                                        onChange={(e) => setBookingDuration(parseInt(e.target.value))}
+                                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                    />
+                                </div>
+
+                                <div className="bg-blue-50 p-4 rounded-lg mb-6">
+                                    <div className="flex justify-between items-center">
+                                        <span className="text-gray-700">Total Amount:</span>
+                                        <span className="text-2xl font-bold text-blue-600">
+                                            ₹{(selectedSlot.rate_per_hour || 50) * bookingDuration}
+                                        </span>
+                                    </div>
+                                </div>
+
+                                <div className="flex space-x-3">
+                                    <button
+                                        onClick={confirmBooking}
+                                        className="flex-1 bg-green-600 text-white py-3 rounded-lg font-semibold hover:bg-green-700 transition"
+                                    >
+                                        Confirm Booking
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            setShowBookingModal(false);
+                                            setSelectedSlot(null);
+                                        }}
+                                        className="flex-1 bg-gray-300 text-gray-700 py-3 rounded-lg font-semibold hover:bg-gray-400 transition"
+                                    >
+                                        Cancel
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+
+</html>
