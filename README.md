@@ -402,7 +402,7 @@ This project is licensed under the MIT License.
 
 ## 📞 Support
 
-For support, email support@example.com or open an issue in the repository.
+For support, email chavhanhasnain30@gmail.com or open an issue in the repository.
 
 ---
 
